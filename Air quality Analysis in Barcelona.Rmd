@@ -1,0 +1,712 @@
+---
+title: "Analysis of Air Quality in Barcelona"
+author: "Lucas Rocha"
+date: "2024-05-21"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    theme: cerulean
+    highlight: tango
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+```
+# Introduction
+
+## Problem Overview
+
+This report presents an analysis of air quality in Barcelona and its impact on public health and the environment.
+
+## City Description
+
+Barcelona, located on the northeastern coast of Spain, is known for its rich cultural heritage, vibrant city life, and diverse economic activities. However, like many other metropolitan areas, Barcelona faces challenges related to air pollution, which can have adverse effects on the health and well-being of its residents.
+
+
+## Objectives
+
+To recapitulate the objectives of our analysis:
+
+**Objective 1**: Our first objective is to identify and characterize <span style="color:red">**atmospheric pollution episodes**</span>  detected at each station in Barcelona. By analyzing air quality data, we aim to pinpoint periods when pollutant levels exceed predefined thresholds, indicating potential pollution episodes.
+
+**Objective 2**: Our second objective is to evaluate the <span style="color:red">**impact of human activity on pollutants**</span> in Barcelona. We will compare air quality data from periods of confinement, such as during the <span style="color:red">**COVID-19 pandemic**</span>, with data from similar periods of normal activity. This analysis will provide insights into how changes in human behavior affect air quality parameters, including pollutants beyond NO2 and PM10.
+
+**Objective 3a**: In the third objective, we will assess the <span style="color:red">**influence of weather conditions on pollutants**</span> in Barcelona. By examining correlations between meteorological variables and pollutant levels, we aim to understand how weather factors such as temperature, humidity, and wind speed affect air quality.
+
+**Objective 3b**: Finally, we will investigate the <span style="color:red">**relationship between weather variables and atmospheric pollution episodes**</span> detected in Objective 1. By analyzing weather data during periods of elevated pollution, we seek to identify patterns and associations that may contribute to the occurrence of pollution episodes in Barcelona.
+
+
+# Methodology
+
+## Data Acquisition
+
+Data for this analysis was obtained from the following sources:
+
+- Air Quality in Barcelona: [Link](https://opendata-ajuntament.barcelona.cat/data/en/dataset/qualitat-aire-detall-bcn)
+- Weather Data in Barcelona: [Link](https://opendata-ajuntament.barcelona.cat/data/en/dataset/mesures-estacions-meteorologiques)
+
+
+## Data Preprocessing and Cleaning
+
+### Data Reading Process
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Aggregating Air and Weather Quality Data**</span>: Read and consolidate the air quality and weather data from multiple CSV files. The data files were located in a specified directory, and the list.files() function was used to list all CSV files in that directory. Each file was read into a dataframe using the read_csv() function from the readr package. These individual dataframes were then combined into a single dataframe using the bind_rows() function from the dplyr package, allowing us to work with a unified dataset.
+</blockquote>
+
+<span style="font-size:18px;">**Data Cleaning**</span>: Once the data was consolidated, we performed several cleaning steps to ensure its quality and usability:
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+**Uniformizing Column Names**: All column names were translated to English for consistency and ease of use.
+
+**Pivoting Columns**: The data included multiple columns representing hourly and validation values, which needed to be transformed into a long format for analysis. This was achieved using the pivot_longer() function from the tidyverse package.
+
+**Adjusting Hour and Validation Columns**: After pivoting, the hour and validation columns were adjusted by subtracting 1 to align with the 0-23 hour format.
+
+**Filtering Rows**: We filtered out rows where the hour did not match the validation hour, ensuring that only valid data entries were retained.
+
+**Handling Missing and Invalid Values**: Rows with NA values or blank entries in the "Value" column were removed, along with rows where the "Validation_Status" column started with "N".
+
+**Creating a DateTime Column**: We created a DateTime column by combining the year, month, day, and hour columns. The original date and hour columns were subsequently removed.
+</blockquote>
+**Weather Data - No Cleaning**: The weather data did not require extensive processing and cleaning because it was well-organized. Although the column corresponding to the reading time occasionally contains "NA," this does not necessarily mean that the row should be discarded, as "NA" indicates that the reading represents an average value. Therefore, the only treatment applied was renaming the columns to ensure consistency with the other tables and to have all column names in English.
+
+
+
+# Code and Results Presentation
+
+<span style="font-size:18px;">**Upload Libraries**</span>
+```{r}
+library(tidyverse)
+library(purrr)
+library(lubridate)
+library(ggplot2)
+library(dplyr)
+library(zoo)
+
+```
+
+<span style="font-size:18px;">**Air Quality Data Loading**</span>
+```{r}
+# Define the path to the folder containing the CSV files
+air_quality_path <- "DataSet_airQuality"
+
+# List CSV files in the directory
+air_quality_files <- list.files(air_quality_path, pattern = "\\.csv$")
+air_quality_full_filenames <- paste0(air_quality_path, "/", air_quality_files)
+
+# Read all CSV files into a list of dataframes
+air_quality_list <- map(air_quality_full_filenames, read_csv)
+```
+
+<span style="font-size:18px;">**Air Quality Data Cleaning**</span>
+```{r}
+# Combine all dataframes into one dataframe
+combined_air_quality <- bind_rows(air_quality_list)
+
+combined_air_quality <- combined_air_quality %>%
+  rename(Province_Code = CODI_PROVINCIA,
+         Province = PROVINCIA,
+         Municipality_Code = CODI_MUNICIPI,
+         Municipality = MUNICIPI,
+         Contaminant_Code = CODI_CONTAMINANT,
+         Station = ESTACIO,
+         Year = ANY,
+         Month = MES,
+         Day = DIA)
+
+# Pivot the hour and validation columns into a long format using pivot_longer
+air_quality_long <- combined_air_quality %>%
+  pivot_longer(cols = matches("^H\\d+$"), names_to = "Hour", values_to = "Value") %>%
+  pivot_longer(cols = matches("^V\\d+$"), names_to = "Validation", values_to = "Validation_Status") %>%
+  mutate(Hour = as.numeric(sub("H", "", Hour)) - 1,  # Adjust hour by subtracting 1
+         Validation_Hour = as.numeric(sub("V", "", Validation)) - 1) %>%  # Adjust validation hour by subtracting 1
+  filter(Hour == Validation_Hour) %>%
+  select(-Validation_Hour, -Validation)
+
+# Clean rows with NA or blank in "Value" and where "Validation_Status" starts with "N"
+air_quality_long <- air_quality_long %>%
+  filter(!is.na(Value) & Value != "" & !grepl("^N", Validation_Status))
+
+# Create the DateTime column
+air_quality_long <- air_quality_long %>%
+  mutate(DateTime = make_datetime(Year, Month, Day, Hour)) %>%
+  select(-c(Year, Month, Day, Hour))  # Remove the individual date and hour columns
+
+# Display the data with DateTime
+head(air_quality_long)
+```
+
+<span style="font-size:18px;">**Air Quality Data Cleaning**</span>
+```{r}
+# English translations for requested columns (if these are part of your data)
+
+```
+
+## Objective 1
+Determine the atmospheric pollution episodes detected at each station.
+
+```{r}
+no2_pm10_data <- air_quality_long %>%
+  filter(Contaminant_Code %in% c("8", "10"))
+
+no2_limit <- 200
+pm10_limit <- 50
+
+pollution_episodes <- no2_pm10_data %>%
+  mutate(episode = case_when(
+    Contaminant_Code == "8" & Value > no2_limit ~ TRUE,
+    Contaminant_Code == "10" & Value > pm10_limit ~ TRUE,
+    TRUE ~ FALSE
+  )) %>%
+  filter(episode == TRUE)
+
+head(pollution_episodes)
+
+# Count the number of pollution episodes by station
+episode_counts <- pollution_episodes %>%
+  group_by(Station, Contaminant_Code) %>%
+  summarise(total_episodes = n(), .groups = 'drop')
+
+print(episode_counts)
+```
+
+## Objective 2
+Assess the impact of human activity on pollutants in Barcelona, comparing moments of confinement with similar moments with normal activity.
+
+```{r}
+### Objective 2 
+### ---Assess the impact of human activity on pollutants in Barcelona, comparing moments of confinement with similar moments with normal activity.
+
+# Define confinement periods
+confinement_periods <- data.frame(
+  start_date = as.Date(c("2020-03-14", "2020-10-29", "2021-01-01", "2021-03-01")),
+  end_date = as.Date(c("2020-04-13", "2021-01-08", "2021-02-08", "2021-03-31"))
+)
+
+# Create a long format for confinement periods
+confinement_periods_long <- confinement_periods %>%
+  rowwise() %>%
+  mutate(period = list(seq(start_date, end_date, by = "day"))) %>%
+  unnest(period) %>%
+  select(period)
+
+# Mark data with confinement periods
+air_quality_obj2 <- air_quality_long %>%
+  mutate(In_Confinement = as.Date(DateTime) %in% confinement_periods_long$period)
+
+# Identify months and days for similar periods
+similar_periods <- confinement_periods_long %>%
+  mutate(month = month(period), day = day(period)) %>%
+  distinct(month, day)
+
+# Expand similar periods for all years
+years <- unique(year(air_quality_obj2$DateTime))
+similar_periods_expanded <- expand.grid(year = years, month = similar_periods$month, day = similar_periods$day) %>%
+  mutate(Date = make_date(year, month, day))
+
+# Mark data with similar periods
+air_quality_obj2 <- air_quality_obj2 %>%
+  mutate(Similar_Period = as.Date(DateTime) %in% similar_periods_expanded$Date)
+
+# Calculate daily averages for each contaminant
+daily_averages <- air_quality_obj2 %>%
+  group_by(Contaminant_Code, Date = as.Date(DateTime), In_Confinement, Similar_Period) %>%
+  summarise(Daily_Average = mean(Value, na.rm = TRUE), .groups = 'drop')
+
+# Calculate 60-day moving averages for each contaminant
+daily_averages <- daily_averages %>%
+  group_by(Contaminant_Code) %>%
+  arrange(Date) %>%
+  mutate(Moving_Average = rollmean(Daily_Average, k = 60, fill = NA, align = "right")) %>%
+  ungroup()
+
+# List of unique contaminants
+contaminants <- unique(daily_averages$Contaminant_Code)
+
+# Loop to generate and save a line plot for each pollutant, including moving averages and highlight similar periods
+for (contaminant in contaminants) {
+  # Filter data for the current pollutant
+  data_subset <- daily_averages %>%
+    filter(Contaminant_Code == contaminant)
+  
+  # Create the line plot including moving averages and highlight similar periods
+  p <- ggplot(data_subset) +
+    geom_line(aes(x = Date, y = Daily_Average, color = In_Confinement), na.rm = TRUE, alpha = 0.5) +
+    geom_line(aes(x = Date, y = Moving_Average), color = "blue", size = 1) +
+    geom_rect(data = data_subset %>% filter(Similar_Period),
+              aes(xmin = Date - 0.5, xmax = Date + 0.5, ymin = -Inf, ymax = Inf, fill = "Similar_Period"),
+              alpha = 0.1) +
+    labs(title = paste("Daily Trend of", contaminant, "with 60-day Moving Average"),
+         x = "Date",
+         y = "Daily Average of Pollutant",
+         color = "Period",
+         fill = "Highlight") +
+    scale_color_manual(values = c("TRUE" = "#FF9999", "FALSE" = "#9999FF"),
+                       labels = c("Non-Confinement", "Confinement")) +
+    scale_fill_manual(values = "green", labels = c("Similar to Confinement (months and days)")) +
+    theme_minimal() +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) +  # Better legibility of dates
+    guides(fill = guide_legend(title = "Highlight"), color = guide_legend(title = "Period"))
+  
+  # Save the plot as a PNG file
+  ggsave(filename = paste0("plot_", contaminant, ".png"), plot = p, width = 10, height = 6)
+  
+}
+
+
+```
+
+## Objective 3
+### Objective 3a
+Assess the impact of weather on pollutants in Barcelona.
+
+```{r}
+# Path for weather and air quality data
+weather_path <- "DataSet_weather"
+
+# Load and combine weather data
+weather_files <- list.files(weather_path, pattern = "\\.csv$")
+weather_full_filenames <- paste0(weather_path, "/", weather_files)
+weather_list <- map(weather_full_filenames, read_csv)
+combined_weather <- bind_rows(weather_list) 
+combined_weather <- combined_weather%>%
+  select(DATA_LECTURA,ACRÒNIM, CODI_ESTACIO , VALOR) %>%
+  rename(Date = DATA_LECTURA, 
+         Acronim = ACRÒNIM,
+         Station_Code = CODI_ESTACIO , 
+         Value = VALOR) %>%
+  mutate(Date = ymd(Date))
+
+# Aggregate weather data by day
+daily_weather <- combined_weather %>%
+  group_by(Date, Acronim) %>%
+  summarise(DailyValue = mean(Value, na.rm = TRUE)) %>%
+  ungroup()
+
+# Carregar e combinar os dados de qualidade do ar
+combined_air_quality <- combined_air_quality %>%
+  pivot_longer(cols = matches("^H\\d+$|^V\\d+$"),
+               names_to = c(".value", "Hour"),
+               names_pattern = "([HV])(\\d+)$") %>%
+  rename(Value = H, Validation_Status = V) %>%
+  mutate(Hour = as.numeric(Hour),
+         DateTime = make_datetime(Year, Month, Day, Hour),
+         Date = as_date(DateTime))
+
+# Filter for Barcelona stations and combine with weather data
+barcelona_stations <- unique(combined_air_quality$Station)
+air_quality_bcn <- combined_air_quality %>%
+  filter(Station %in% barcelona_stations) %>%
+  mutate(Date = as_date(DateTime))
+
+# Aggregate air quality data by day
+daily_air_quality <- air_quality_bcn %>%
+  group_by(Date, Contaminant_Code) %>%
+  summarise(DailyValue = mean(Value, na.rm = TRUE)) %>%
+  ungroup()
+
+# Combine daily air quality data with daily weather data
+air_quality_weather <- daily_air_quality %>%
+  left_join(daily_weather, by = "Date")
+
+# Inspect combined data
+head(air_quality_weather)
+
+# Calculate Pearson correlations
+correlation_results <- air_quality_weather %>%
+  group_by(Contaminant_Code, Acronim) %>%
+  summarise(
+    correlation = cor(DailyValue.x, DailyValue.y, use = "pairwise.complete.obs")
+  ) %>%
+  ungroup()
+
+# Display correlation results
+print(correlation_results)
+
+# Select the top 6 correlation pairs
+top_6_correlations <- correlation_results %>%
+  arrange(desc(abs(correlation))) %>%
+  slice(1:6)
+
+# Display results of the top 6 correlations
+print(top_6_correlations)
+
+# Function to fit linear regression model
+fit_regression <- function(pollutant, data) {
+  data <- data %>%
+    filter(Contaminant_Code == pollutant) %>%
+    pivot_wider(names_from = VariableCode, values_from = DailyValue.y) %>%
+    select(-Date, -Contaminant_Code)
+  
+  formula <- as.formula(paste("DailyValue.x ~ ."))
+  fit <- lm(formula, data = data)
+  return(fit)
+}
+
+# Function to plot regression line
+plot_regression <- function(data, pollutant, weather_var) {
+  data_filtered <- data %>%
+    filter(Contaminant_Code == pollutant, Acronim == weather_var)
+  
+  if (nrow(data_filtered) == 0) {
+    warning(paste("No data available for pollutant", pollutant, "and weather variable", weather_var))
+    return(NULL)
+  }
+  
+  p <- ggplot(data_filtered, aes(x = DailyValue.y, y = DailyValue.x)) +
+    geom_point(alpha = 0.5) +
+    geom_smooth(method = "gam", se = FALSE, color = "red") +
+    labs(title = paste("Regression plot of", pollutant, "vs", weather_var),
+         x = weather_var,
+         y = pollutant) +
+    theme_minimal()
+  
+  return(p)
+}
+
+# Loop through the top 6 correlations to generate and print plots
+for (i in 1:nrow(top_6_correlations)) {
+  pollutant <- top_6_correlations$Contaminant_Code[i]
+  weather_var <- top_6_correlations$Acronim[i]
+  
+  plot <- plot_regression(air_quality_weather, pollutant, weather_var)
+  if (!is.null(plot)) {
+    # Save the plot as a PNG file
+    ggsave(filename = paste0("plot_", pollutant, "_vs_", weather_var, ".png"), plot = plot, width = 10, height = 6)
+  }
+}
+```
+
+### Objective 3b
+Examine what values of weather variables are related with the athmospheric pollution episodes detected in the Objective 1.
+```{r}
+# Identify pollution episodes detected in Objective 1 (already done previously)
+pollution_episodes <- pollution_episodes %>%
+  mutate(Date = as.Date(DateTime))
+
+# Ensure the `Date` column in `daily_weather` is in the correct format
+daily_weather <- daily_weather %>%
+  mutate(Date = as.Date(Date))
+
+# Combine pollution episodes with weather data
+pollution_weather_episodes <- pollution_episodes %>%
+  left_join(daily_weather, by = "Date")
+
+# Filter relevant weather variables
+relevant_weather_vars <- unique(daily_weather$Acronim)
+filtered_pollution_weather_episodes <- pollution_weather_episodes %>%
+  filter(Acronim %in% relevant_weather_vars)
+
+# Analyze weather variables related to pollution episodes
+weather_during_episodes <- filtered_pollution_weather_episodes %>%
+  group_by(Contaminant_Code, Acronim) %>%
+  summarise(
+    Mean_Value = mean(DailyValue, na.rm = TRUE),
+    Median_Value = median(DailyValue, na.rm = TRUE),
+    SD_Value = sd(DailyValue, na.rm = TRUE),
+    Min_Value = min(DailyValue, na.rm = TRUE),
+    Max_Value = max(DailyValue, na.rm = TRUE)
+  ) %>%
+  ungroup()
+
+# Display results of descriptive analyses
+print(weather_during_episodes)
+
+# Plot the distribution of weather variables during pollution episodes
+for (pollutant in unique(filtered_pollution_weather_episodes$Contaminant_Code)) {
+  for (weather_var in relevant_weather_vars) {
+    data_subset <- filtered_pollution_weather_episodes %>%
+      filter(Contaminant_Code == pollutant, Acronim == weather_var)
+    
+    p <- ggplot(data_subset, aes(x = DailyValue)) +
+      geom_histogram(binwidth = 1, fill = "#FF9999", color = "black", alpha = 0.7) +
+      labs(title = paste("Distribution of", weather_var, "during pollution episodes of", pollutant),
+           x = weather_var,
+           y = "Frequency") +
+      theme_minimal()
+    
+    # Save the plot as a PNG file
+    ggsave(filename = paste0("plot_", pollutant, "_vs_", weather_var, ".png"), plot = p, width = 10, height = 6)
+  }
+}
+
+```
+
+
+
+
+# Conclusions
+## Objective 1
+
+### Summary of Objective 1 Analysis
+
+In order to identify atmospheric pollution episodes at each station, the following steps were undertaken:
+
+1. **Data Filtering**: The air quality dataset was filtered to include only NO2 (Contaminant_Code "8") and PM10 (Contaminant_Code "10"), as these pollutants are critical indicators of air pollution levels.
+
+2. **Pollution Limits**: Regulatory standards were applied, setting pollution limits at 200 µg/m³ for NO2 and 50 µg/m³ for PM10.
+
+3. **Detection of Pollution Episodes**: Using the filtered data, pollution episodes were identified by flagging instances where pollutant levels exceeded the set limits. This was achieved by adding an `episode` column, which marked records as `TRUE` if they surpassed the pollution thresholds.
+
+4. **Results**: The analysis resulted in the identification of 8233 pollution episodes. The dataset includes detailed information on the location (province, municipality, station), the type of contaminant, the measured pollutant value, and the date and time of each reading. A sample of this dataset highlights the episodes detected at various stations in Barcelona.
+
+This comprehensive approach ensures accurate identification of high pollution periods, enabling effective monitoring and regulatory actions. The results are crucial for understanding pollution dynamics and for the development of strategies to mitigate air quality issues.
+
+
+## Objective 2
+
+<span style="font-size:18px;">**General Descriptions**</span>
+
+**Blue Trend Line (60-Day Moving Average)**
+Description: The blue line represents the 60-day moving average, smoothing out daily fluctuations and highlighting long-term trends in pollution levels.
+Observation: This line helps to identify seasonal variations and the impacts of lockdown events more clearly.
+
+**Confinamente Periods (Red Lines)**
+Description: The daily trend lines colored in red represent the lockdown periods.
+Observation: These periods coincide with a visible reduction in pollution levels, indicating decreased human activities.
+
+**Periods Similar to Lockdowns (Green Areas)**
+Description: The areas highlighted in green represent periods (months and days) similar to the lockdown periods but in different years.
+Observation: These periods allow for comparison to see if there are seasonal patterns that affect pollution levels similarly to the lockdowns.
+
+![Graph of Contaminant 1](plot_1.png)
+![Graph of Contaminant 997](plot_997.png)
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Daily Trend of Contaminant 1 and 997 with 60-day Moving Average**</span>
+During the lockdown periods, there is a noticeable **reduction in pollution levels**, indicating a significant decrease in human activities. In the following years, pollution levels from January to March are significantly higher compared to the lockdown periods, suggesting that human activities have a considerable impact on pollution during these months. The graph provides clear evidence that lockdown periods result in significant reductions in the levels of contaminant 1 and 999. The similar periods, marked in green, show much higher pollution levels, indicating that seasonality alone does not have a significant effect. These insights are crucial for developing effective strategies for pollution control and public health protection.
+</blockquote>
+
+![Graph of Contaminant 10](plot_10.png)
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Daily Trend of Contaminant 10 with 60-day Moving Average**</span>
+For contaminant 10, we observe that the lowest values in the dataset consistently occur during the periods highlighted in green and during the lockdown, indicating some type of seasonality. However, during the lockdown period, we recorded the lowest peak in the entire dataset. This suggests that, in addition to seasonality, the reduction in human activities had an additional, albeit small, influence on the decrease in the levels of this contaminant.
+</blockquote>
+![Graph of Contaminant 14](plot_14.png)
+![Graph of Contaminant 999](plot_999.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Daily Trend of Contaminant 14 and 999 with 60-day Moving Average**</span>
+For contaminant 14 and 999, we observe a significant drop in the average pollutant level during the lockdown period. Initially, this suggests that the reduction in human activities could be the cause of this decrease. However, when analyzing the data from the periods highlighted in green (periods similar to the lockdown in subsequent years), we notice that these periods also show the same significant drop. This leads us to infer that there is some type of seasonality for that period, which may be influencing the reduction in pollutant levels.
+</blockquote>
+
+![Graph of Contaminant 996](plot_996.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Daily Trend of Contaminant 996 with 60-day Moving Average**</span>
+During the lockdown periods, we observed a significant increase in the levels of pollutant 996 compared to similar periods. This pollutant, designated as "mesura interna equip," is measured by internal equipment, and data analysis reveals several possible reasons for this behavior.
+
+Internal Sources of Pollution:
+During the lockdown, people spent more time at home, which led to increased use of stoves, heating systems, cleaning products, and other household appliances. These activities can increase the emission of indoor pollutants, contributing to the higher levels of 996.
+</blockquote>
+
+## Objective 3
+### Objective 3a
+
+To assess the impact of weather variables on pollutants in Barcelona, we followed a detailed analytical process.
+
+First, we loaded and combined the weather data from multiple CSV files, ensuring the data was aggregated by day. Then, we cleaned and transformed the air quality data, focusing on the stations in Barcelona and also aggregating this data by day.
+
+Next, we merged the daily air quality data with the daily weather data to create a comprehensive dataset, allowing us to examine the correlations between these variables. Using this combined dataset, we calculated Pearson correlations between the daily values of pollutants and weather variables.
+
+From these calculations, we identified the top six correlations, indicating the strongest relationships between specific pollutants and weather variables. We then used these top correlations to fit linear regression models, providing further insights into these relationships.
+
+This systematic approach allowed us to identify the most significant correlations and visually demonstrate the impact of weather variables on air pollution in Barcelona.
+
+![](plot_14_vs_RS24h.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Relationship between Weather Variable RS24h and Contaminant 14**</span>
+The scatter plot shows the relationship between the weather variable RS24h (on the x-axis) and pollutant 14 (on the y-axis). We observe a positive correlation, where higher RS24h levels are associated with higher levels of pollutant 14. The red regression line indicates a non-linear relationship, with an initial slight decrease in pollutant 14 levels as RS24h increases, followed by a sharp rise that eventually levels off. The variability in the data suggests that other factors may also influence pollutant levels.
+</blockquote>
+
+![](plot_114_vs_RS24h.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Relationship between Weather Variable RS24h and Contaminant 114**</span>
+The scatter plot shows the relationship between the weather variable RS24h (on the x-axis) and pollutant 114 (on the y-axis). We observe a positive correlation, where higher RS24h levels are associated with higher levels of pollutant 114. The red regression line indicates a non-linear relationship, with an initial slight decrease in pollutant 114 levels as RS24h increases, followed by a steady rise that eventually levels off. The variability in the data suggests that other factors may also influence pollutant levels.
+</blockquote>
+
+![](plot_2_vs_PX.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Relationship between Weather Variable PX and Contaminant 2**</span>
+The scatter plot shows the relationship between the weather variable PX (on the x-axis) and Contaminant 2 (on the y-axis). We observe a positive correlation, where higher PX levels are associated with higher levels of Contaminant 2. The red regression line indicates a linear relationship, with Contaminant 2 levels increasing as PX increases.
+
+However, there are relatively few data points, which may affect the robustness of the analysis. The variability in the points around the regression line suggests that other factors may also influence Contaminant 2 levels.
+</blockquote>
+
+![](plot_999_vs_TN.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Relationship between Weather Variable TN and Contaminant 999**</span>
+We observe a negative correlation, where higher TN levels are associated with lower levels of Contaminant 999. The red regression line indicates a non-linear relationship, with Contaminant 999 levels decreasing as TN increases and then leveling off.
+
+There are ample data points, which strengthens the robustness of the analysis. The variability in the points around the regression line suggests that while TN has a significant impact, other factors may also influence Contaminant 999 levels.
+</blockquote>
+
+![](plot_2_vs_TX.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Relationship between Weather Variable TX and Contaminant 2**</span>
+We observe a positive correlation, where higher PX levels are associated with higher levels of Contaminant 2. The red regression line indicates a linear relationship, with pollutant 2 levels increasing as PX increases.
+
+However, there are relatively few data points, which may affect the robustness of the analysis. The variability in the points around the regression line suggests that other factors may also influence Contaminant 2 levels.
+</blockquote>
+
+![](plot_999_vs_TM.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Relationship between Weather Variable TM and Contaminant 999**</span>
+We observe a negative correlation, where higher TM levels are associated with lower levels of pollutant 999. The red regression line indicates a non-linear relationship, with pollutant 999 levels decreasing as TM increases and then leveling off. The consistent negative trend shown by the regression line suggests a strong inverse relationship between TM and pollutant 999. 
+</blockquote>
+
+![](plot_22_vs_VVM10.png)
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">**Relationship between Weather Variable VVM10 and Contaminant 22**</span>
+We observe a negative correlation, where higher VVM10 levels are associated with lower levels of pollutant 22. The red regression line indicates a non-linear relationship, with pollutant 22 levels decreasing sharply as VVM10 increases and then leveling off.The consistent negative trend shown by the regression line suggests a strong inverse relationship between VVM10 and pollutant 22.
+</blockquote>
+
+
+The analysis of the scatter plots reveals the relationship between various weather variables and pollutant levels in Barcelona. We observe a mix of positive and negative correlations, indicating that weather conditions significantly impact air quality. For instance, higher RS24h levels are associated with increased levels of certain pollutants, while higher TM and VVM10 levels are linked to reduced levels of others. These relationships are often non-linear, suggesting complex interactions between weather conditions and pollutant concentrations.
+
+However, there are some limitations to this analysis:
+
+1. **Data Variability**: The scatter plots show considerable variability around the regression lines, indicating that other factors besides the weather variables might influence pollutant levels.
+   
+2. **Data Volume**: In some cases, such as the analysis involving PX and pollutant 2, the relatively small number of data points may affect the robustness and reliability of the conclusions.
+
+3. **Non-linear Relationships**: The presence of non-linear relationships complicates the interpretation and suggests that simple linear models may not fully capture the dynamics between weather conditions and pollutant levels.
+
+4. **External Influences**: Other environmental and anthropogenic factors, such as traffic patterns, industrial activities, and regulatory measures, can also significantly impact pollutant levels but are not accounted for in this analysis.
+
+In summary, while the analysis provides valuable insights into how weather variables affect air pollution in Barcelona, the observed variability, data volume issues, non-linear relationships, and potential external influences highlight the need for a more comprehensive approach to fully understand these interactions.
+
+
+### Objective 3b
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">1. VVX10 and VVM10 (Wind Speed)</span>
+![](plot_10_vs_VVX10.png)
+![](plot_10_vs_VVM10.png)
+
+
+- **VVX10**: The distribution is right-skewed with a peak around 5-10 m/s. Most values fall within this range, with some extreme values up to 25 m/s.
+- **VVM10**: The distribution is also right-skewed, with most values concentrated around 2-3 m/s, indicating that during pollution episodes, the wind tends to be weak to moderate.
+</blockquote>
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">2. TX, TN, TM (Temperature)</span>
+![](plot_10_vs_TX.png)
+![](plot_10_vs_TN.png)
+![](plot_10_vs_TM.png)
+- **TX (Maximum Temperature)**: The distribution is approximately bimodal, with peaks around 15°C and 25°C, suggesting seasonal variation during pollution episodes.
+- **TN (Minimum Temperature)**: The distribution is also bimodal, with peaks around 5°C and 15°C.
+- **TM (Average Temperature)**: The distribution follows a pattern similar to TX and TN, with peaks around 10°C and 20°C. This indicates that the average temperature during pollution episodes varies considerably.
+</blockquote>
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">3. RS24h (Solar Radiation)</span>
+![](plot_10_vs_RS24h.png)
+
+
+- The RS24h distribution is quite varied, with peaks around 10-15 W/m² and others around 25-30 W/m², suggesting that the intensity of solar radiation varies significantly during pollution episodes.
+</blockquote>
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">4. PX, PN, PM (Pressure)</span>
+
+![](plot_10_vs_PX.png)
+![](plot_10_vs_PN.png)
+![](plot_10_vs_PM.png)
+- **PX (Maximum Pressure)**: The distribution is centered around 1000 hPa, with a relatively symmetrical distribution.
+- **PN (Minimum Pressure)**: The distribution is centered slightly below 1000 hPa.
+- **PM (Average Pressure)**: The distribution is similar to that of PX and PN, also centered around 1000 hPa. This indicates that atmospheric pressure during pollution episodes is relatively stable.
+</blockquote>
+
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">5. PPT (Precipitation)</span>
+![](plot_10_vs_PPT.png)
+- The PPT distribution is highly right-skewed, with most values concentrated at 0 mm. This suggests that pollution episodes predominantly occur on dry days.
+</blockquote>
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">6. HRX, HRN, HRM (Relative Humidity)</span>
+![](plot_10_vs_HRX.png)
+![](plot_10_vs_HRN.png)
+![](plot_10_vs_HRM.png)
+- **HRX (Maximum Relative Humidity)**: The distribution is right-skewed with a very pronounced peak around 100%. Most HRX values during pollution episodes are near the maximum humidity level.
+- **HRN (Minimum Relative Humidity)**: The distribution is bimodal, with peaks around 30-50% and another around 50-70%. This indicates significant variation in minimum humidity during pollution episodes, showing that episodes occur under both drier and more humid conditions.
+- **HRM (Average Relative Humidity)**: The distribution is approximately symmetrical with a peak around 60%. The average humidity during pollution episodes tends to be moderate.
+</blockquote>
+
+
+<blockquote style="border-left:10px solid #ccc; padding:10px; background-color:#f9f9f9; font-size: 14px;">
+<span style="font-size:18px;">7. DVVX10 and DVM10 (Wind Speed and Direction Variability)</span>
+![](plot_10_vs_DVVX10.png)
+![](plot_10_vs_DVM10.png)
+- **DVVX10**: The distribution is variable and dispersed, with many peaks and no clear trend. This suggests that wind speed during pollution episodes is quite inconsistent.
+- **DVM10**: The distribution is also variable and dispersed, similar to DVVX10, with many peaks. This indicates that wind direction is equally variable during pollution episodes.
+</blockquote>
+
+
+### Conclusion
+
+Based on the analysis of the graphs, we can conclude that:
+
+1. **Wind Speed**: Pollution episodes are associated with low to moderate wind speeds.
+2. **Temperature**: There is significant variation in temperatures during pollution episodes, indicating possible influence from different seasons.
+3. **Solar Radiation**: The intensity of solar radiation varies significantly, which can influence the dispersion of pollutants.
+4. **Atmospheric Pressure**: The atmospheric pressure during pollution episodes is relatively stable.
+5. **Precipitation**: Most pollution episodes occur on dry days, indicating that a lack of rain may contribute to the accumulation of pollutants.
+6. **Relative Humidity**:
+   - **HRX**: High humidity (close to 100%) is common during pollution episodes.
+   - **HRN**: The minimum humidity varies significantly, ranging from low to moderate.
+   - **HRM**: The average humidity tends to be moderate, suggesting that pollution episodes occur under non-extreme humidity conditions.
+7. **Wind Speed and Direction Variability**:
+   - **DVVX10 and DVM10**: Both are highly variable, without a clear trend, indicating significant inconsistency in wind speed and direction during pollution episodes. This variability can hinder the dispersion of pollutants, contributing to the maintenance of high levels of atmospheric pollution.
+
+These meteorological factors, especially high humidity and wind variability, can significantly influence the occurrence and intensity of atmospheric pollution episodes.
+
+
+## Proposals to Improve Barcelona's Air Quality Policy
+
+<span style="font-size:18px;">**Analysis and Utilization of Seasonal Patterns:**</span>
+A good starting point for formulating air quality policies in Barcelona would be to analyze and take advantage of the seasonal patterns in pollutant levels. For instance, in the case of contaminant 7, the levels of this pollutant naturally reach high peaks during the periods highlighted in green. Understanding the reasons behind these seasonal peaks is crucial. Focus reduction efforts on this pollutant during these specific periods by implementing preventive and corrective measures. This can include awareness campaigns, temporary restrictions on polluting activities, and increased monitoring to control emission sources during these critical periods.
+
+<span style="font-size:18px;">**Focus on Periods Outside of Natural Reduction Months:**</span>
+Another useful approach is to analyze graphs such as that of contaminant 10. We observe that the lowest peaks of this pollutant occur during periods similar to non-confinement. If the pollutant naturally decreases at this time of year, we can concentrate pollutant reduction efforts during the periods outside these months. In this way, we optimize resources and maximize the effectiveness of environmental policies by directing actions to periods when pollutant levels are higher and less influenced by natural seasonal factors.
+
+## Suggestions to Improve Open Air Quality Data
+
+
+<span style="font-size:18px;">**Ease of Data Access:**</span>
+Currently, to analyze the entire air quality dataset, it is necessary to download a CSV file for each month of the year, which is cumbersome and inefficient. A significant improvement would be to offer the option to download the complete data for a year or longer periods in a single file. This would simplify analysis and save time, especially for researchers and analysts working with large volumes of data.
+
+<span style="font-size:18px;">**Optimization of Data Structure:**</span>
+The current data layout, with separate columns for day, month, and each hour of the day, is not very optimized. It is recommended to improve the data structure by using one column for the full date and another for the hour. This would facilitate data processing and manipulation in analysis tools like R.
+
+<span style="font-size:18px;">**Clarity and Consistency of Codes:**</span>
+The legend that explains what each pollutant code represents is incomplete, with some codes used in the Barcelona air quality dataset not being represented in the explanatory dataset of pollutants. This causes inconsistencies and difficulties when merging data for necessary analyses. It is essential to ensure that all codes are well-documented and that the legend is complete and accessible. Improving the clarity and consistency of the codes will ensure that all analyses are accurate and that the data can be integrated seamlessly.
+
+<span style="font-size:18px;">**More Efficient Data Collection for Certain Pollutants:**</span>
+For some pollutants, such as pollutant 2, the amount of available data is insufficient to draw robust conclusions. It is crucial to promote more effective and comprehensive data collection for these pollutants, ensuring that there is enough data for analyses and informed decision-making.
+
+# Data Visualization App
+With the date available, a shiny web app was generated that allows us to view information regarding pollutants and the different weather variables, and can also select the desired dates
+- Data Visualization App: [Link](https://cesar-eiras.shinyapps.io/pollution_BCN/)
