@@ -143,7 +143,7 @@ head(air_quality_long)
 
 <span style="font-size:18px;">**Air Quality Data Cleaning**</span>
 ```{r}
-# English translations for requested columns (if these are part of your data)
+# English translations for requested columns
 
 ```
 
@@ -288,7 +288,7 @@ daily_weather <- combined_weather %>%
   summarise(DailyValue = mean(Value, na.rm = TRUE)) %>%
   ungroup()
 
-# Carregar e combinar os dados de qualidade do ar
+# Load and combine the air quality data
 combined_air_quality <- combined_air_quality %>%
   pivot_longer(cols = matches("^H\\d+$|^V\\d+$"),
                names_to = c(".value", "Hour"),
